@@ -1,43 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"fmt"
 	"io"
 	"net/url"
 	"strconv"
-	"github.com/jackpal/bencode-go"
 )
-type fileInfo struct {
-	Length  int 	`bencode:"length"`
-	Path	[]string	`bencode:"path"`
-}
-type bencodeInfo struct {
-    Pieces      string 		`bencode:"pieces"`
-    PieceLength int    		`bencode:"piece length"`
-    Length      int    		`bencode:"length"`
-	Files		[]fileInfo	`bencode:"files"`
-    Name        string 		`bencode:"name"`
-}
-func (i *bencodeInfo) hash() ([20]byte, error) {
-	var buf bytes.Buffer
-	err := bencode.Marshal(&buf, *i)
-	if err != nil {
-		return [20]byte{}, err
-	}
-	h := sha1.Sum(buf.Bytes())
-	return h, nil
-}
-type bencodeTorrent struct {
-    Announce 		string      `bencode:"announce"`
-	AnnounceList 	[][]string 	`bencode:"announce-list"`
-    Info     		bencodeInfo `bencode:"info"`
-}
-
-func Open(r io.Reader) (*bencodeTorrent,error) {
-    bto:=bencodeTorrent{}
-    err:=bencode.Unmarshal(r,&bto)
+func Open(r io.Reader) (*bencodeObject,error) {
+    bto:=bencodeObject{}
+    err:=Unmarshal(r,&bto)
     if err!=nil {
         return nil,err
     }
@@ -70,34 +42,55 @@ func (t *TorrentFile) requestHTTP(peerID [20]byte, port uint16) (string, error) 
     base.RawQuery = params.Encode()
     return base.String(), nil
 }
-func (bto bencodeTorrent) toTorrentFile() (TorrentFile, error) {
-	InfoHash, err := bto.Info.hash()
-	if err != nil {
-		return TorrentFile{},err
-	}
-	const hashLen = 20
-	piecesBytes := []byte(bto.Info.Pieces)
-	if len(piecesBytes)%hashLen!=0 {
-		return TorrentFile{},fmt.Errorf("invalid hashlen")
-	}
-	num := len(piecesBytes)/hashLen
-	pieceHashes := make([][20]byte,num)
-	for i := range num {
-		copy(pieceHashes[i][:],piecesBytes[i*hashLen:(i+1)*hashLen])
-	}
-	length := *bto.Info.Length
-	if length == 0 {
-		for _, file := range *bto.Info.Files {
-			length+=file.Length
+func (bto *bencodeObject) toTorrentFile() (TorrentFile, error) {
+    infoObj, err := bto.valAt("info")
+    if err != nil {
+        return TorrentFile{}, fmt.Errorf("missing info dictionary: %v", err)
+    }
+    marshaledInfo, err := infoObj.Marshal()
+    if err != nil {
+        return TorrentFile{}, fmt.Errorf("failed to marshal info for hashing: %v", err)
+    }
+    infoHash := sha1.Sum([]byte(marshaledInfo))
+    nameObj, _ := infoObj.valAt("name")
+    pieceLengthObj, _ := infoObj.valAt("piece length")
+    piecesObj, _ := infoObj.valAt("pieces")
+    const hashLen = 20
+    piecesBytes := []byte(piecesObj.str)
+    if len(piecesBytes)%hashLen != 0 {
+        return TorrentFile{}, fmt.Errorf("invalid pieces hash length")
+    }
+    numPieces := len(piecesBytes) / hashLen
+    pieceHashes := make([][20]byte, numPieces)
+    for i := range numPieces {
+        copy(pieceHashes[i][:], piecesBytes[i*hashLen:(i+1)*hashLen])
+    }
+    var totalLength int64
+    if lenObj, err := infoObj.valAt("length"); err == nil {
+        totalLength = lenObj.val
+    } else if filesObj, err := infoObj.valAt("files"); err == nil {
+        for i := 0; i < len(filesObj.list); i++ {
+            f, _ := filesObj.valAtIndex(i)
+            fLen, _ := f.valAt("length")
+            totalLength += fLen.val
+        }
+    }
+    announceObj, _ := bto.valAt("announce")
+	announceListObj, _ := bto.valAt("announce-list")
+	var announceList [][]string
+	for _,v := range announceListObj.list {
+		announceList = append(announceList, []string{})
+		for _,v2 := range v.list {
+			announceList[len(announceList)-1] = append(announceList[len(announceList)-1], v2.str)
 		}
 	}
-	return TorrentFile{
-		Announce: bto.Announce,
-		AnnounceList: bto.AnnounceList,
-		InfoHash: InfoHash,
-		PieceHashes: pieceHashes,
-		PieceLength: bto.Info.PieceLength,
-		Length: length,
-		Name: bto.Info.Name,
-	}, nil
+    return TorrentFile{
+        Announce:    announceObj.str,
+		AnnounceList: announceList,
+        InfoHash:    infoHash,
+        PieceHashes: pieceHashes,
+        PieceLength: int(pieceLengthObj.val),
+        Length:      int(totalLength),
+        Name:        nameObj.str,
+    }, nil
 }
