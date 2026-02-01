@@ -16,6 +16,9 @@ func main() {
 	if err != nil {
 		return	
 	}
-	fmt.Println(bt.Info.Files)
-	fmt.Println(bt.Info.Length)
+	tf, err := bt.toTorrentFile()
+	if err != nil {
+		return	
+	}
+	fmt.Printf("%+v\n",tf)
 }
