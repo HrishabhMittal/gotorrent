@@ -2,7 +2,7 @@
 
 build:
 	@echo building...
-	@go build -gcflags="-m" -o ./build/dman ./cmd/main
+	@go build -gcflags="-m" -o ./build/gotorrent ./cmd/main
 
 run:
 	@go run ./cmd/main
