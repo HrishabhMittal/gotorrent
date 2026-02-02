@@ -1,5 +1,4 @@
-package main
-
+package torrent
 import (
 	"crypto/sha1"
 	"fmt"

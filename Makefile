@@ -2,7 +2,7 @@
 
 build:
 	@echo building...
-	@go build -o ./build/gotorrent ./cmd/main
+	@go build -o ./build/gotorrent ./cmd/gotorrent
 
 run:
 	@go run ./cmd/main

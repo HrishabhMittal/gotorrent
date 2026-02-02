@@ -1,5 +1,4 @@
-package main
-
+package torrent
 import (
 	"math/rand/v2"
 )

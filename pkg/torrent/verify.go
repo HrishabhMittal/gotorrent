@@ -1,5 +1,4 @@
-package main
-
+package torrent
 import (
 	"bytes"
 	"crypto/sha1"
