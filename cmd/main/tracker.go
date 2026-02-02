@@ -105,7 +105,6 @@ func (t *UDPTracker) getPeers(tf *TorrentFile) ([]Peer, error) {
 		return nil, fmt.Errorf("tracker error: %s", errMsg)
 	}
 	if len(resp) < 20 {
-		// fmt.Printf("%v",resp)
 		return nil, fmt.Errorf("response too short")
 	}
 	if action != 1 || transaction_id != tid {

@@ -32,15 +32,19 @@ func main() {
 
 	fmt.Printf("Downloading: %s\n", tf.Name)
 
-	// Open file and start downloading
 	dn, err := NewDownloader(&tf)
 	if err != nil {
 		fmt.Println("couldnt start download:", err)
 		return
 	}
 
-	// BLOCK here until download finishes
 	dn.Wait()
 
 	fmt.Println("Exiting...")
+	err = Verify(&tf)
+	if err != nil {
+		fmt.Println("Error:", err)
+	} else {
+		fmt.Println("Files verified successfully.")
+	}
 }

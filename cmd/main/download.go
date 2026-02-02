@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 )
@@ -23,7 +22,7 @@ type Downloader struct {
 	downloadOver chan struct{}
 	tf           *TorrentFile
 	piecesDone   int
-	outFile      *os.File
+	writer       *TorrentWriter
 }
 
 func (d *Downloader) AddPeer(p *PeerCon) {
@@ -39,14 +38,10 @@ func (d *Downloader) Wait() {
 }
 
 func NewDownloader(tf *TorrentFile) (*Downloader, error) {
-	
-	outFile, err := os.Create(tf.Name)
+
+	writer, err := NewTorrentWriter(tf)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create output file: %v", err)
-	}
-	
-	if err := outFile.Truncate(int64(tf.Length)); err != nil {
-		return nil, fmt.Errorf("failed to allocate file: %v", err)
+		return nil, fmt.Errorf("failed to create torrent writer: %v", err)
 	}
 
 	down := &Downloader{
@@ -55,10 +50,9 @@ func NewDownloader(tf *TorrentFile) (*Downloader, error) {
 		workQueue:    make(chan int64, len(tf.PieceHashes)),
 		downloadOver: make(chan struct{}),
 		tf:           tf,
-		outFile:      outFile,
+		writer:       writer,
 	}
 
-	
 	for i := 0; i < len(tf.PieceHashes); i++ {
 		down.workQueue <- int64(i)
 	}
@@ -73,7 +67,6 @@ func NewDownloader(tf *TorrentFile) (*Downloader, error) {
 }
 
 func (d *Downloader) processResults() {
-	defer d.outFile.Close()
 
 	for {
 		select {
@@ -83,17 +76,15 @@ func (d *Downloader) processResults() {
 			if d.field.HasPiece(int(piece.id)) {
 				continue
 			}
-
-			
 			hash := sha1.Sum(piece.data)
 			expected := d.tf.PieceHashes[piece.id]
 			if !bytes.Equal(hash[:], expected[:]) {
 				fmt.Printf("\rHash fail: %d. Retrying...", piece.id)
 				d.workQueue <- piece.id
 				continue
-			}		
-			offset := piece.id * int64(d.tf.PieceLength)
-			_, err := d.outFile.WriteAt(piece.data, offset)
+			}
+
+			err := d.writer.Write(int(piece.id), 0, piece.data)
 			if err != nil {
 				fmt.Printf("Disk error piece %d: %v\n", piece.id, err)
 				d.workQueue <- piece.id
@@ -114,8 +105,7 @@ func (d *Downloader) processResults() {
 }
 
 func (d *Downloader) startRequestWorker(p *PeerCon) {
-	const BlockSize = 16384 
-
+	const BlockSize = 16384
 	for {
 		select {
 		case <-d.downloadOver:
@@ -124,16 +114,13 @@ func (d *Downloader) startRequestWorker(p *PeerCon) {
 		}
 
 		if p.choked {
-			time.Sleep(500 * time.Millisecond) 
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 
-		
 		index := <-d.workQueue
 
-		
 		if !p.peerBitfield.HasPiece(int(index)) {
-			
 			go func() {
 				time.Sleep(1 * time.Second)
 				d.workQueue <- index
@@ -141,15 +128,12 @@ func (d *Downloader) startRequestWorker(p *PeerCon) {
 			continue
 		}
 
-		
 		pieceSize := d.tf.PieceLength
 		if index == int64(len(d.tf.PieceHashes)-1) {
 			pieceSize = d.tf.Length - (int(index) * d.tf.PieceLength)
 		}
 
-		
 		for offset := 0; offset < pieceSize; offset += BlockSize {
-			
 			currentBlockSize := BlockSize
 			if offset+currentBlockSize > pieceSize {
 				currentBlockSize = pieceSize - offset
@@ -157,14 +141,10 @@ func (d *Downloader) startRequestWorker(p *PeerCon) {
 
 			err := p.SendRequest(int(index), offset, currentBlockSize)
 			if err != nil {
-				
 				d.workQueue <- index
 				return
 			}
 		}
-
-		
-		
 	}
 }
 
@@ -188,8 +168,7 @@ func (d *Downloader) startDiscovery(confirm chan *PeerCon) {
 				}
 
 				for _, v := range peers {
-					p := v 
-
+					p := v
 					n := NewPeerCon(d.tf, &p, d.field)
 					go func(pCon *PeerCon) {
 						if err := pCon.ShakeHands(); err == nil {
