@@ -4,43 +4,43 @@ import (
 	"fmt"
 	"os"
 )
+
 func main() {
+	if len(os.Args) < 2 {
+		fmt.Println("Usage: go run . <torrent_file>")
+		return
+	}
+
 	args := os.Args
 	reader, err := os.Open(args[1])
 	if err != nil {
-		return	
+		fmt.Println("couldnt open torrent file:", err)
+		return
 	}
-	bt,err := Open(reader)
+
+	bt, err := Open(reader)
 	if err != nil {
-		return	
+		fmt.Println("couldnt parse torrent file:", err)
+		return
 	}
+
 	tf, err := bt.toTorrentFile()
 	if err != nil {
-		return	
-	}
-	// fmt.Printf("%+v\n",tf)
-	// fmt.Printf("%v\n",tf.InfoHash)
-	// for _, tier := range tf.AnnounceList {
-	//     for _, trackURL := range tier {
-	//         tracker, err := NewUDPTracker(trackURL)
-	//         if err != nil { continue }
-	//         peers, err := tracker.getPeers(&tf)
-	//         if err == nil {
-	//             fmt.Printf("found peers: %v\n", peers)
-	//             return
-	//         }
-	//     }
-	// }
-	tracker,err := NewUDPTracker(tf.Announce)
-	if err != nil {
-		fmt.Println("couldnt create udptracker")
+		fmt.Println("couldnt convert to torrent file:", err)
 		return
 	}
-	peers, err := tracker.getPeers(&tf)
+
+	fmt.Printf("Downloading: %s\n", tf.Name)
+
+	// Open file and start downloading
+	dn, err := NewDownloader(&tf)
 	if err != nil {
-		fmt.Println("couldnt get peers")
-		fmt.Printf("err: %v\n", err)
+		fmt.Println("couldnt start download:", err)
 		return
 	}
-	fmt.Printf("peers: %v\n", peers)
+
+	// BLOCK here until download finishes
+	dn.Wait()
+
+	fmt.Println("Exiting...")
 }

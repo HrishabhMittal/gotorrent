@@ -28,41 +28,42 @@ type bencodeObject struct {
 	val     int64
 	str     string
 }
+
 func (b *bencodeObject) Marshal() (string, error) {
-    var builder strings.Builder
-    err := b.marshalRecursive(&builder)
-    if err != nil {
-        return "", err
-    }
-    return builder.String(), nil
+	var builder strings.Builder
+	err := b.marshalRecursive(&builder)
+	if err != nil {
+		return "", err
+	}
+	return builder.String(), nil
 }
 func (b *bencodeObject) marshalRecursive(builder *strings.Builder) error {
-    switch b.objType {
-    case STRING:
-		fmt.Fprintf(builder,"%d:%s",len(b.str),b.str)
-    case INT:
-        fmt.Fprintf(builder,"i%de", b.val)
-    case LIST:
-        builder.WriteByte('l')
-        for _, item := range b.list {
-            if err := item.marshalRecursive(builder); err != nil {
-                return err
-            }
-        }
-        builder.WriteByte('e')
-    case DICT:
-        builder.WriteByte('d')
-        for _, p := range b.dict {
-            fmt.Fprintf(builder,"%d:%s", len(p.key), p.key)
-            if err := p.value.marshalRecursive(builder); err != nil {
-                return err
-            }
-        }
-        builder.WriteByte('e')
-    default:
-        return fmt.Errorf("invalid type")
-    }
-    return nil
+	switch b.objType {
+	case STRING:
+		fmt.Fprintf(builder, "%d:%s", len(b.str), b.str)
+	case INT:
+		fmt.Fprintf(builder, "i%de", b.val)
+	case LIST:
+		builder.WriteByte('l')
+		for _, item := range b.list {
+			if err := item.marshalRecursive(builder); err != nil {
+				return err
+			}
+		}
+		builder.WriteByte('e')
+	case DICT:
+		builder.WriteByte('d')
+		for _, p := range b.dict {
+			fmt.Fprintf(builder, "%d:%s", len(p.key), p.key)
+			if err := p.value.marshalRecursive(builder); err != nil {
+				return err
+			}
+		}
+		builder.WriteByte('e')
+	default:
+		return fmt.Errorf("invalid type")
+	}
+	return nil
 }
 func (b *bencodeObject) valAt(key string) (bencodeObject, error) {
 	if b.objType != DICT {
