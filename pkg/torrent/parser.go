@@ -1,4 +1,5 @@
 package torrent
+
 import (
 	"crypto/sha1"
 	"fmt"
@@ -60,11 +61,9 @@ func (bto *bencodeObject) toTorrentFile() (TorrentFile, error) {
 		return TorrentFile{}, fmt.Errorf("failed to marshal info for hashing: %v", err)
 	}
 	infoHash := sha1.Sum([]byte(marshaledInfo))
-
 	nameObj, _ := infoObj.valAt("name")
 	pieceLengthObj, _ := infoObj.valAt("piece length")
 	piecesObj, _ := infoObj.valAt("pieces")
-
 	const hashLen = 20
 	piecesBytes := []byte(piecesObj.str)
 	if len(piecesBytes)%hashLen != 0 {
@@ -75,10 +74,8 @@ func (bto *bencodeObject) toTorrentFile() (TorrentFile, error) {
 	for i := range numPieces {
 		copy(pieceHashes[i][:], piecesBytes[i*hashLen:(i+1)*hashLen])
 	}
-
 	var totalLength int64
 	var files []FileInfo
-
 	if lenObj, err := infoObj.valAt("length"); err == nil {
 		totalLength = lenObj.val
 		files = append(files, FileInfo{
@@ -87,7 +84,6 @@ func (bto *bencodeObject) toTorrentFile() (TorrentFile, error) {
 		})
 	} else if filesObj, err := infoObj.valAt("files"); err == nil {
 		baseDir := nameObj.str
-
 		for i := 0; i < len(filesObj.list); i++ {
 			fObj, _ := filesObj.valAtIndex(i)
 			fLen, _ := fObj.valAt("length")
@@ -96,7 +92,6 @@ func (bto *bencodeObject) toTorrentFile() (TorrentFile, error) {
 			for _, p := range pathListObj.list {
 				fullPath = filepath.Join(fullPath, p.str)
 			}
-
 			files = append(files, FileInfo{
 				Path:   fullPath,
 				Length: int(fLen.val),
@@ -104,7 +99,6 @@ func (bto *bencodeObject) toTorrentFile() (TorrentFile, error) {
 			totalLength += fLen.val
 		}
 	}
-
 	announceObj, _ := bto.valAt("announce")
 	announceListObj, _ := bto.valAt("announce-list")
 	var announceList [][]string
@@ -118,7 +112,6 @@ func (bto *bencodeObject) toTorrentFile() (TorrentFile, error) {
 	} else {
 		announceList = [][]string{{announceObj.str}}
 	}
-
 	return TorrentFile{
 		Announce:     announceObj.str,
 		AnnounceList: announceList,

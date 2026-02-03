@@ -12,3 +12,8 @@ func (bf Bitfield) SetPiece(index int) {
 	offset := index % 8
 	bf[byteIndex] |= 1 << (7 - offset)
 }
+func (bf Bitfield) ClearPiece(index int) {
+	byteIndex := index / 8
+	offset := index % 8
+	bf[byteIndex] &= ^(1 << (7 - offset))
+}

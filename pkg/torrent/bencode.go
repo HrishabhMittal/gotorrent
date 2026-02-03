@@ -20,7 +20,6 @@ type pair struct {
 	key   string
 	value bencodeObject
 }
-
 type bencodeObject struct {
 	objType BencodeType
 	dict    []pair
@@ -76,7 +75,6 @@ func (b *bencodeObject) valAt(key string) (bencodeObject, error) {
 	}
 	return bencodeObject{}, fmt.Errorf("key not found")
 }
-
 func (b *bencodeObject) valAtIndex(index int) (bencodeObject, error) {
 	if b.objType != LIST {
 		return bencodeObject{}, fmt.Errorf("not a list")
@@ -86,7 +84,6 @@ func (b *bencodeObject) valAtIndex(index int) (bencodeObject, error) {
 	}
 	return b.list[index], nil
 }
-
 func readOneByte(r io.Reader) int {
 	buf := make([]byte, 1)
 	n, err := r.Read(buf)
@@ -95,7 +92,6 @@ func readOneByte(r io.Reader) int {
 	}
 	return int(buf[0])
 }
-
 func Unmarshal(r io.Reader, ben *bencodeObject) error {
 	if ben == nil {
 		return fmt.Errorf("cant unmarshal objects into nil object")

@@ -121,7 +121,6 @@ func (c *TCPConnector) Recv(size int32, timeout float32) ([]byte, *net.TCPAddr, 
 	}
 	return buf[:n], c.addr, nil
 }
-
 func (c *TCPConnector) RecvAll(size int32, timeout float32) ([]byte, *net.TCPAddr, error) {
 	if c.con == nil {
 		return nil, nil, fmt.Errorf("no active connection")

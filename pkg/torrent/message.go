@@ -1,4 +1,5 @@
 package torrent
+
 import "encoding/binary"
 
 type Message struct {

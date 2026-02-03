@@ -1,4 +1,5 @@
 package torrent
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -93,7 +94,7 @@ func (t *UDPTracker) getPeers(tf *TorrentFile) ([]Peer, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, _, err := t.uc.Recv(2048, 5)
+	resp, _, err := t.uc.Recv(2048, 1)
 	if err != nil {
 		return nil, err
 	}
