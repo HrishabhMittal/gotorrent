@@ -7,7 +7,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -16,8 +15,6 @@ type Piece struct {
 	data []byte
 }
 
-var currentlyDownloading atomic.Int32 = atomic.Int32{}
-var failed atomic.Int32 = atomic.Int32{}
 
 type Downloader struct {
 	peerMu       sync.Mutex
@@ -32,6 +29,7 @@ type Downloader struct {
 	pexCh        chan string
 	seenPeers    map[string]bool
 	seenMu       sync.Mutex
+	stats		 Stats
 }
 
 func (d *Downloader) AddPeer(p *PeerCon) {
@@ -39,7 +37,7 @@ func (d *Downloader) AddPeer(p *PeerCon) {
 	defer d.peerMu.Unlock()
 	peerPieces := make(chan Piece)
 	go func() {
-		p.DownloadLoop(peerPieces)
+		p.DownloadLoop(d, peerPieces)
 		close(peerPieces)
 	}()
 	go d.startRequestWorker(p, peerPieces)
@@ -48,7 +46,7 @@ func (d *Downloader) Wait() {
 	<-d.downloadOver
 }
 func NewDownloader(tf *TorrentFile) (*Downloader, error) {
-	writer, err := NewTorrentWriter(tf)
+	writer, err := NewTorrentWriter(tf,nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create torrent writer: %v", err)
 	}
@@ -63,6 +61,8 @@ func NewDownloader(tf *TorrentFile) (*Downloader, error) {
 		pexCh:        make(chan string, 500),
 		seenPeers:    make(map[string]bool),
 	}
+	writer.d=down
+	down.stats.startTime=time.Now()
 	go down.processResults()
 	confirm := make(chan *PeerCon, 200)
 	go down.startDiscovery(confirm)
@@ -117,8 +117,8 @@ func (d *Downloader) processResults() {
 		case <-d.downloadOver:
 			return
 		case <-logTicker.C:
-			fmt.Printf("\rDownloaded: %d/%d pieces | Failed: %d | Active: %d | Searching: %d | Peers: %d | Unchoked: %d | PEX Peers: %d | Seeds: %d   ",
-				d.piecesDone, len(d.tf.PieceHashes), failed.Load(), currentlyDownloading.Load(), searching.Load(), numPeers.Load(), unchokedPeers.Load(), len(d.seenPeers), seeders.Load())
+			fmt.Printf("\rDownloaded: %d/%d pieces | Failed: %d | Active: %d | Searching: %d | Peers: %d | Unchoked: %d | PEX Peers: %d | Seeds: %d | Avg: %s      ",
+				d.piecesDone, len(d.tf.PieceHashes), d.stats.failed.Load(), d.stats.currentlyDownloading.Load(), d.stats.searching.Load(), d.stats.numPeers.Load(), d.stats.unchokedPeers.Load(), len(d.seenPeers), d.stats.seeders.Load(), formatBytes(float64(d.stats.totalWritten)/(float64(time.Since(d.stats.startTime)/time.Second))))
 		case piece := <-d.pieceQueue:
 			d.mu.Lock()
 			if d.field.HasPiece(int(piece.id)) {
@@ -133,7 +133,7 @@ func (d *Downloader) processResults() {
 				d.mu.Lock()
 				d.requested.ClearPiece(int(piece.id))
 				d.mu.Unlock()
-				failed.Add(1)
+				d.stats.failed.Add(1)
 				continue
 			}
 			err := d.writer.Write(int(piece.id), 0, piece.data)
@@ -142,7 +142,7 @@ func (d *Downloader) processResults() {
 				d.mu.Lock()
 				d.requested.ClearPiece(int(piece.id))
 				d.mu.Unlock()
-				failed.Add(1)
+				d.stats.failed.Add(1)
 				continue
 			}
 			d.mu.Lock()
@@ -158,21 +158,18 @@ func (d *Downloader) processResults() {
 	}
 }
 
-var numPeers atomic.Int32 = atomic.Int32{}
-var searching atomic.Int32 = atomic.Int32{}
-var notFound atomic.Int32 = atomic.Int32{}
 
 func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
-	numPeers.Add(1)
-	defer numPeers.Add(-1)
+	d.stats.numPeers.Add(1)
+	defer d.stats.numPeers.Add(-1)
 	timeChoked := 0
 	const BlockSize = 16384
 	failPiece := func(index int) {
 		d.mu.Lock()
 		d.requested.ClearPiece(index)
 		d.mu.Unlock()
-		currentlyDownloading.Add(-1)
-		failed.Add(1)
+		d.stats.currentlyDownloading.Add(-1)
+		d.stats.failed.Add(1)
 	}
 	for {
 		select {
@@ -189,17 +186,17 @@ func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 			}
 			continue
 		}
-		searching.Add(1)
+		d.stats.searching.Add(1)
 		timeChoked = 0
 		index, found := d.PickPiece(p.peerBitfield)
 		if !found {
 			time.Sleep(1 * time.Second)
-			notFound.Add(1)
-			searching.Add(-1)
+			d.stats.notFound.Add(1)
+			d.stats.searching.Add(-1)
 			continue
 		}
-		searching.Add(-1)
-		currentlyDownloading.Add(1)
+		d.stats.searching.Add(-1)
+		d.stats.currentlyDownloading.Add(1)
 		pieceSize := d.tf.PieceLength
 		if int64(index) == int64(len(d.tf.PieceHashes)-1) {
 			pieceSize = d.tf.Length - (int(index) * d.tf.PieceLength)
@@ -231,7 +228,7 @@ func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 				return
 			}
 			d.pieceQueue <- piece
-			currentlyDownloading.Add(-1)
+			d.stats.currentlyDownloading.Add(-1)
 		case <-time.After(30 * time.Second):
 			failPiece(index)
 			p.con.Close()

@@ -10,9 +10,10 @@ import (
 type TorrentWriter struct {
 	tf *TorrentFile
 	mu sync.Mutex
+	d *Downloader
 }
 
-func NewTorrentWriter(tf *TorrentFile) (*TorrentWriter, error) {
+func NewTorrentWriter(tf *TorrentFile,d *Downloader) (*TorrentWriter, error) {
 	for _, f := range tf.Files {
 		dir := filepath.Dir(f.Path)
 		if dir != "." && dir != "/" {
@@ -32,11 +33,13 @@ func NewTorrentWriter(tf *TorrentFile) (*TorrentWriter, error) {
 	}
 	return &TorrentWriter{
 		tf: tf,
+		d: d,
 	}, nil
 }
 func (w *TorrentWriter) Write(index int, begin int, data []byte) error {
 	globalOffset := int64(index)*int64(w.tf.PieceLength) + int64(begin)
 	bytesToWrite := len(data)
+	total := len(data)
 	currentFileStart := int64(0)
 	for _, f := range w.tf.Files {
 		fileLen := int64(f.Length)
@@ -49,12 +52,17 @@ func (w *TorrentWriter) Write(index int, begin int, data []byte) error {
 			}
 			err := w.writeToFile(f.Path, data[:amount], relativeOffset)
 			if err != nil {
+				w.d.stats.totalWritten += 50
+				fmt.Printf("sad")
 				return err
 			}
 			globalOffset += amount
 			bytesToWrite -= int(amount)
 			data = data[amount:]
 			if bytesToWrite == 0 {
+				if w.d!=nil {
+					w.d.stats.totalWritten += int64(total)
+				}
 				return nil
 			}
 		}
@@ -62,6 +70,9 @@ func (w *TorrentWriter) Write(index int, begin int, data []byte) error {
 	}
 	if bytesToWrite > 0 {
 		return fmt.Errorf("wrote everything but still had %d bytes left (file size mismatch?)", bytesToWrite)
+	}
+	if w.d!=nil {
+		w.d.stats.totalWritten += int64(total)
 	}
 	return nil
 }
