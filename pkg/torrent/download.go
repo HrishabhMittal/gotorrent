@@ -15,7 +15,6 @@ type Piece struct {
 	data []byte
 }
 
-
 type Downloader struct {
 	peerMu       sync.Mutex
 	pieceQueue   chan Piece
@@ -29,7 +28,146 @@ type Downloader struct {
 	pexCh        chan string
 	seenPeers    map[string]bool
 	seenMu       sync.Mutex
-	stats		 Stats
+	stats        Stats
+}
+
+func NewDownloader(tf *TorrentFile) (*Downloader, error) {
+	writer, err := NewTorrentWriter(tf, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create torrent writer: %v", err)
+	}
+	bfSize := len(tf.PieceHashes)/8 + 1
+	down := &Downloader{
+		field:        make(Bitfield, bfSize),
+		requested:    make(Bitfield, bfSize),
+		pieceQueue:   make(chan Piece, PIECE_QUEUE),
+		downloadOver: make(chan struct{}),
+		tf:           tf,
+		writer:       writer,
+		pexCh:        make(chan string, PEX_CHANNEL),
+		seenPeers:    make(map[string]bool),
+	}
+	limit := make(chan struct{}, DISCOVERY_LIMIT)
+	writer.d = down
+	down.stats.startTime = time.Now()
+
+	go down.processResults()
+	confirm := make(chan *PeerCon, CONFIRMED_PEER_QUEUE)
+
+	go down.startDiscovery(confirm, limit)
+	go down.processPEX(confirm, limit)
+	go down.manageNewPeers(confirm)
+
+	return down, nil
+}
+
+func (d *Downloader) attemptConnection(p Peer, limit chan struct{}, confirm chan *PeerCon) {
+	limit <- struct{}{}
+	defer func() { <-limit }()
+	d.stats.peersProcessed.Add(1)
+	n := NewPeerCon(d.tf, &p, d.field, d.pexCh)
+	if err := n.ShakeHands(); err == nil {
+		d.stats.peersConfirmed.Add(1)
+		confirm <- n
+	} else {
+		d.stats.peersDenied.Add(1)
+	}
+}
+
+func (d *Downloader) startDiscovery(confirm chan *PeerCon, limit chan struct{}) {
+	for {
+		select {
+		case <-d.downloadOver:
+			return
+		default:
+		}
+
+		d.stats.validTrackers.Store(0)
+		for _, tier := range d.tf.AnnounceList {
+			for _, announceURL := range tier {
+				go func(url string) {
+					var peers []Peer
+					var err error
+					switch url[0] {
+					case 'h':
+						tracker := NewHTTPTracker(url)
+						peers, err = tracker.hc.getPeers(d.tf)
+					case 'u':
+						tracker, err := NewUDPTracker(url)
+						if err == nil {
+							peers, err = tracker.getPeers(d.tf)
+						}
+					}
+
+					if err != nil || len(peers) == 0 {
+						return
+					}
+
+					d.stats.validTrackers.Add(1)
+
+					for _, v := range peers {
+						addr := fmt.Sprintf("%s:%d", v.IP.String(), v.port)
+
+						d.seenMu.Lock()
+						if d.seenPeers[addr] {
+							d.seenMu.Unlock()
+							continue
+						}
+						d.seenPeers[addr] = true
+						d.stats.peersProvided.Add(1)
+						d.seenMu.Unlock()
+
+						go d.attemptConnection(v, limit, confirm)
+					}
+				}(announceURL)
+			}
+		}
+		time.Sleep(1 * time.Minute)
+	}
+}
+
+func (d *Downloader) processPEX(confirm chan *PeerCon, limit chan struct{}) {
+	for {
+		select {
+		case <-d.downloadOver:
+			return
+		case addr := <-d.pexCh:
+			d.stats.pexProcessed.Add(1)
+			d.seenMu.Lock()
+			if d.seenPeers[addr] {
+				d.seenMu.Unlock()
+				continue
+			}
+			d.seenPeers[addr] = true
+			d.seenMu.Unlock()
+			go func(address string) {
+				host, portStr, err := net.SplitHostPort(address)
+				if err != nil {
+					return
+				}
+				port, _ := strconv.Atoi(portStr)
+				p := Peer{
+					IP:   net.ParseIP(host),
+					port: uint16(port),
+				}
+				d.stats.pexAdded.Add(1)
+				d.attemptConnection(p, limit, confirm)
+			}(addr)
+		}
+	}
+}
+
+func (d *Downloader) manageNewPeers(confirm chan *PeerCon) {
+	for {
+		select {
+		case <-d.downloadOver:
+			return
+		case ans := <-confirm:
+			if ans != nil {
+				d.AddPeer(ans)
+			}
+		}
+	}
 }
 
 func (d *Downloader) AddPeer(p *PeerCon) {
@@ -42,62 +180,7 @@ func (d *Downloader) AddPeer(p *PeerCon) {
 	}()
 	go d.startRequestWorker(p, peerPieces)
 }
-func (d *Downloader) Wait() {
-	<-d.downloadOver
-}
-func NewDownloader(tf *TorrentFile) (*Downloader, error) {
-	writer, err := NewTorrentWriter(tf,nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create torrent writer: %v", err)
-	}
-	bfSize := len(tf.PieceHashes)/8 + 1
-	down := &Downloader{
-		field:        make(Bitfield, bfSize),
-		requested:    make(Bitfield, bfSize),
-		pieceQueue:   make(chan Piece, 200),
-		downloadOver: make(chan struct{}),
-		tf:           tf,
-		writer:       writer,
-		pexCh:        make(chan string, 500),
-		seenPeers:    make(map[string]bool),
-	}
-	writer.d=down
-	down.stats.startTime=time.Now()
-	go down.processResults()
-	confirm := make(chan *PeerCon, 200)
-	go down.startDiscovery(confirm)
-	go down.processPEX(confirm)
-	go down.manageNewPeers(confirm)
-	return down, nil
-}
-func (d *Downloader) processPEX(confirm chan *PeerCon) {
-	for {
-		select {
-		case <-d.downloadOver:
-			return
-		case addr := <-d.pexCh:
-			d.seenMu.Lock()
-			if d.seenPeers[addr] {
-				d.seenMu.Unlock()
-				continue
-			}
-			d.seenPeers[addr] = true
-			d.seenMu.Unlock()
-			go func(address string) {
-				host, portStr, _ := net.SplitHostPort(address)
-				port, _ := strconv.Atoi(portStr)
-				p := Peer{
-					IP:   net.ParseIP(host),
-					port: uint16(port),
-				}
-				n := NewPeerCon(d.tf, &p, d.field, d.pexCh)
-				if err := n.ShakeHands(); err == nil {
-					confirm <- n
-				}
-			}(addr)
-		}
-	}
-}
+
 func (d *Downloader) PickPiece(peerBitfield Bitfield) (int, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -109,61 +192,15 @@ func (d *Downloader) PickPiece(peerBitfield Bitfield) (int, bool) {
 	}
 	return 0, false
 }
-func (d *Downloader) processResults() {
-	logTicker := time.NewTicker(1 * time.Second)
-	defer logTicker.Stop()
-	for {
-		select {
-		case <-d.downloadOver:
-			return
-		case <-logTicker.C:
-			fmt.Printf("\rDownloaded: %d/%d pieces | Failed: %d | Active: %d | Searching: %d | Peers: %d | Unchoked: %d | PEX Peers: %d | Seeds: %d | Avg: %s      ",
-				d.piecesDone, len(d.tf.PieceHashes), d.stats.failed.Load(), d.stats.currentlyDownloading.Load(), d.stats.searching.Load(), d.stats.numPeers.Load(), d.stats.unchokedPeers.Load(), len(d.seenPeers), d.stats.seeders.Load(), formatBytes(float64(d.stats.totalWritten)/(float64(time.Since(d.stats.startTime)/time.Second))))
-		case piece := <-d.pieceQueue:
-			d.mu.Lock()
-			if d.field.HasPiece(int(piece.id)) {
-				d.mu.Unlock()
-				continue
-			}
-			d.mu.Unlock()
-			hash := sha1.Sum(piece.data)
-			expected := d.tf.PieceHashes[piece.id]
-			if !bytes.Equal(hash[:], expected[:]) {
-				fmt.Printf("\n[Error] Hash fail: %d\n", piece.id)
-				d.mu.Lock()
-				d.requested.ClearPiece(int(piece.id))
-				d.mu.Unlock()
-				d.stats.failed.Add(1)
-				continue
-			}
-			err := d.writer.Write(int(piece.id), 0, piece.data)
-			if err != nil {
-				fmt.Printf("\n[Error] Disk write fail piece %d: %v\n", piece.id, err)
-				d.mu.Lock()
-				d.requested.ClearPiece(int(piece.id))
-				d.mu.Unlock()
-				d.stats.failed.Add(1)
-				continue
-			}
-			d.mu.Lock()
-			d.field.SetPiece(int(piece.id))
-			d.piecesDone++
-			d.mu.Unlock()
-			if d.piecesDone == len(d.tf.PieceHashes) {
-				fmt.Println("\nDownload Complete!")
-				close(d.downloadOver)
-				return
-			}
-		}
-	}
-}
-
 
 func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 	d.stats.numPeers.Add(1)
 	defer d.stats.numPeers.Add(-1)
-	timeChoked := 0
-	const BlockSize = 16384
+
+	const BlockSize = REQUEST_BLOCK_SIZE
+
+	timeChoked := int64(0)
+
 	failPiece := func(index int) {
 		d.mu.Lock()
 		d.requested.ClearPiece(index)
@@ -171,31 +208,35 @@ func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 		d.stats.currentlyDownloading.Add(-1)
 		d.stats.failed.Add(1)
 	}
+
 	for {
 		select {
 		case <-d.downloadOver:
 			return
 		default:
 		}
+
 		for p.choked {
-			timeChoked++
 			time.Sleep(100 * time.Millisecond)
-			if timeChoked == 100 {
+			if timeChoked >= int64(MAX_CHOKED_TIME) {
 				p.con.Close()
 				return
 			}
+			timeChoked += int64(100 * time.Millisecond)
 			continue
 		}
-		d.stats.searching.Add(1)
 		timeChoked = 0
+
+		d.stats.searching.Add(1)
 		index, found := d.PickPiece(p.peerBitfield)
+		d.stats.searching.Add(-1)
+
 		if !found {
-			time.Sleep(1 * time.Second)
 			d.stats.notFound.Add(1)
-			d.stats.searching.Add(-1)
+			time.Sleep(1 * time.Second)
 			continue
 		}
-		d.stats.searching.Add(-1)
+
 		d.stats.currentlyDownloading.Add(1)
 		pieceSize := d.tf.PieceLength
 		if int64(index) == int64(len(d.tf.PieceHashes)-1) {
@@ -206,29 +247,31 @@ func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 			if offset+currentBlockSize > pieceSize {
 				currentBlockSize = pieceSize - offset
 			}
+
 			select {
 			case <-p.backlog:
-			case <-time.After(10 * time.Second):
+			case <-time.After(15 * time.Second):
 				failPiece(index)
 				p.con.Close()
 				return
 			case <-d.downloadOver:
 				return
 			}
-			err := p.SendRequest(int(index), offset, currentBlockSize)
-			if err != nil {
+
+			if err := p.SendRequest(int(index), offset, currentBlockSize); err != nil {
 				failPiece(index)
 				return
 			}
 		}
+
 		select {
 		case piece, ok := <-peerPieces:
+			d.stats.currentlyDownloading.Add(-1)
 			if !ok {
 				failPiece(index)
 				return
 			}
 			d.pieceQueue <- piece
-			d.stats.currentlyDownloading.Add(-1)
 		case <-time.After(30 * time.Second):
 			failPiece(index)
 			p.con.Close()
@@ -236,47 +279,56 @@ func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 		}
 	}
 }
-func (d *Downloader) startDiscovery(confirm chan *PeerCon) {
-	fmt.Println("[Discovery] Starting tracker announce loop...")
+
+func (d *Downloader) processResults() {
+	logTicker := time.NewTicker(1 * time.Second)
+	defer logTicker.Stop()
 	for {
 		select {
 		case <-d.downloadOver:
 			return
-		default:
-		}
-		for _, tier := range d.tf.AnnounceList {
-			for _, announceURL := range tier {
-				tracker, err := NewUDPTracker(announceURL)
-				if err != nil {
-					continue
-				}
-				peers, err := tracker.getPeers(d.tf)
-				if err != nil {
-					continue
-				}
-				for _, v := range peers {
-					p := v
-					n := NewPeerCon(d.tf, &p, d.field, d.pexCh)
-					go func(pCon *PeerCon) {
-						if err := pCon.ShakeHands(); err == nil {
-							confirm <- pCon
-						}
-					}(n)
-				}
+		case <-logTicker.C:
+			d.printStats()
+		case piece := <-d.pieceQueue:
+			d.mu.Lock()
+			if d.field.HasPiece(int(piece.id)) {
+				d.mu.Unlock()
+				continue
+			}
+			d.mu.Unlock()
+
+			hash := sha1.Sum(piece.data)
+			expected := d.tf.PieceHashes[piece.id]
+			if !bytes.Equal(hash[:], expected[:]) {
+				d.mu.Lock()
+				d.requested.ClearPiece(int(piece.id))
+				d.mu.Unlock()
+				d.stats.failed.Add(1)
+				continue
+			}
+
+			if err := d.writer.Write(int(piece.id), 0, piece.data); err != nil {
+				d.mu.Lock()
+				d.requested.ClearPiece(int(piece.id))
+				d.mu.Unlock()
+				d.stats.failed.Add(1)
+				continue
+			}
+
+			d.mu.Lock()
+			d.field.SetPiece(int(piece.id))
+			d.piecesDone++
+			d.mu.Unlock()
+
+			if d.piecesDone == len(d.tf.PieceHashes) {
+				fmt.Println("\nDownload Complete!")
+				close(d.downloadOver)
+				return
 			}
 		}
-		time.Sleep(time.Second * 30)
 	}
 }
-func (d *Downloader) manageNewPeers(confirm chan *PeerCon) {
-	for {
-		select {
-		case <-d.downloadOver:
-			return
-		case ans := <-confirm:
-			if ans != nil {
-				d.AddPeer(ans)
-			}
-		}
-	}
+
+func (d *Downloader) Wait() {
+	<-d.downloadOver
 }

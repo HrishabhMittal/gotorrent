@@ -10,10 +10,10 @@ import (
 type TorrentWriter struct {
 	tf *TorrentFile
 	mu sync.Mutex
-	d *Downloader
+	d  *Downloader
 }
 
-func NewTorrentWriter(tf *TorrentFile,d *Downloader) (*TorrentWriter, error) {
+func NewTorrentWriter(tf *TorrentFile, d *Downloader) (*TorrentWriter, error) {
 	for _, f := range tf.Files {
 		dir := filepath.Dir(f.Path)
 		if dir != "." && dir != "/" {
@@ -33,7 +33,7 @@ func NewTorrentWriter(tf *TorrentFile,d *Downloader) (*TorrentWriter, error) {
 	}
 	return &TorrentWriter{
 		tf: tf,
-		d: d,
+		d:  d,
 	}, nil
 }
 func (w *TorrentWriter) Write(index int, begin int, data []byte) error {
@@ -60,7 +60,7 @@ func (w *TorrentWriter) Write(index int, begin int, data []byte) error {
 			bytesToWrite -= int(amount)
 			data = data[amount:]
 			if bytesToWrite == 0 {
-				if w.d!=nil {
+				if w.d != nil {
 					w.d.stats.totalWritten += int64(total)
 				}
 				return nil
@@ -71,7 +71,7 @@ func (w *TorrentWriter) Write(index int, begin int, data []byte) error {
 	if bytesToWrite > 0 {
 		return fmt.Errorf("wrote everything but still had %d bytes left (file size mismatch?)", bytesToWrite)
 	}
-	if w.d!=nil {
+	if w.d != nil {
 		w.d.stats.totalWritten += int64(total)
 	}
 	return nil

@@ -7,7 +7,7 @@ import (
 )
 
 func Verify(tf *TorrentFile) error {
-	w, err := NewTorrentWriter(tf,nil)
+	w, err := NewTorrentWriter(tf, nil)
 	if err != nil {
 		return fmt.Errorf("failed to initialize writer: %v", err)
 	}

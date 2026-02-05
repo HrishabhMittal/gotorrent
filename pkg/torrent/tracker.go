@@ -2,11 +2,15 @@ package torrent
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"net/http"
 	"net/url"
+	"strconv"
+	"time"
 )
 
 const MAGIC_CONSTANT = 0x41727101980
@@ -111,4 +115,66 @@ func (t *UDPTracker) getPeers(tf *TorrentFile) ([]Peer, error) {
 		return nil, fmt.Errorf("invalid announce response expected: %v %v got %v %v\n", 1, tid, action, transaction_id)
 	}
 	return UnmarshalPeers(resp[20:]), nil
+}
+
+type HTTPTracker struct {
+	hc *HTTPConnector
+}
+
+func NewHTTPTracker(rawURL string) *HTTPTracker {
+	return &HTTPTracker{
+		hc: NewHTTPConnector(rawURL),
+	}
+}
+
+func (ht *HTTPTracker) SendRequest(hr *http.Request) (*http.Response, error) {
+	resp, err := ht.hc.client.Do(hr)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (ht *HTTPConnector) getPeers(tf *TorrentFile) ([]Peer, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	base, err := url.Parse(ht.baseURL)
+	if err != nil {
+		return nil, err
+	}
+	peerID := []byte(genPeerID("-GT0001-XXXXXXXXXXXX"))
+	params := url.Values{}
+	params.Set("info_hash", string(tf.InfoHash[:]))
+	params.Set("peer_id", string(peerID[:]))
+	params.Set("port", "6881")
+	params.Set("uploaded", "0")
+	params.Set("downloaded", "0")
+	params.Set("compact", "1")
+	params.Set("left", strconv.Itoa(tf.Length))
+	base.RawQuery = params.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := ht.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tracker responded with status %d", resp.StatusCode)
+	}
+	var ben bencodeObject
+	err = Unmarshal(resp.Body, &ben)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse tracker response: %v", err)
+	}
+	peersObj, err := ben.valAt("peers")
+	if err != nil {
+		if failObj, failErr := ben.valAt("failure reason"); failErr == nil {
+			return nil, fmt.Errorf("tracker failure: %s", failObj.str)
+		}
+		return nil, fmt.Errorf("peers key missing in tracker response")
+	}
+	return UnmarshalPeers([]byte(peersObj.str)), nil
 }

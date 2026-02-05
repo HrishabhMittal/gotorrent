@@ -24,9 +24,7 @@ const (
 const (
 	ExtendedHandshakeID = 0
 	UtPexID             = 1
-	MAX_BACKLOG         = 50
 )
-
 
 type PeerCon struct {
 	myBitfield   Bitfield
@@ -45,7 +43,7 @@ func NewPeerCon(tf *TorrentFile, p *Peer, bits Bitfield, pexCh chan string) *Pee
 	numPieces := len(tf.PieceHashes)
 	bitfieldSize := (numPieces + 7) / 8
 	bk := make(chan struct{}, MAX_BACKLOG)
-	for _ = range MAX_BACKLOG {
+	for range MAX_BACKLOG {
 		bk <- struct{}{}
 	}
 	return &PeerCon{
@@ -70,7 +68,7 @@ func (p *PeerCon) ShakeHands() error {
 	if err := p.con.Send(req.Bytes()); err != nil {
 		return err
 	}
-	resp, _, err := p.con.RecvAll(68, 5)
+	resp, _, err := p.con.RecvAll(68, 2)
 	if err != nil {
 		return fmt.Errorf("handshake recv failed: %v", err)
 	}
@@ -89,6 +87,9 @@ func (p *PeerCon) SendExtendedHandshake() error {
 	buf.Write(payload)
 	return p.SendMessage(&Message{ID: EXTENDED, Payload: buf.Bytes()})
 }
+func (p *PeerCon) SendBitfield() error {
+	return p.SendMessage(&Message{ID: BITFIELD, Payload: p.myBitfield})
+}
 func (p *PeerCon) ReadMessage() (*Message, error) {
 	lenBuf, _, err := p.con.RecvAll(4, 10)
 	if err != nil {
@@ -97,6 +98,9 @@ func (p *PeerCon) ReadMessage() (*Message, error) {
 	length := binary.BigEndian.Uint32(lenBuf)
 	if length == 0 {
 		return nil, nil
+	}
+	if length > MAX_MSG_LEN {
+		return nil, fmt.Errorf("message length too large: %d", length)
 	}
 	msgBuf, _, err := p.con.RecvAll(int32(length), 10)
 	if err != nil {
@@ -123,7 +127,14 @@ func (p *PeerCon) SendRequest(index, begin, length int) error {
 	binary.BigEndian.PutUint32(payload[8:12], uint32(length))
 	return p.SendMessage(&Message{ID: REQUEST, Payload: payload})
 }
-func (p *PeerCon) DownloadLoop(d *Downloader,results chan Piece) {
+func (p *PeerCon) SendPiece(index, begin uint32, data []byte) error {
+	payload := make([]byte, 8+len(data))
+	binary.BigEndian.PutUint32(payload[0:4], index)
+	binary.BigEndian.PutUint32(payload[4:8], begin)
+	copy(payload[8:], data)
+	return p.SendMessage(&Message{ID: PIECE, Payload: payload})
+}
+func (p *PeerCon) DownloadLoop(d *Downloader, results chan Piece) {
 	defer p.con.Close()
 	defer func() {
 		if !p.choked {
@@ -132,6 +143,7 @@ func (p *PeerCon) DownloadLoop(d *Downloader,results chan Piece) {
 	}()
 	p.SendExtendedHandshake()
 	p.SendUnchoke()
+	// p.SendBitfield()
 	p.SendInterested()
 	pieceBuffers := make(map[uint32][]byte)
 	pieceProgress := make(map[uint32]int)
@@ -158,6 +170,19 @@ func (p *PeerCon) DownloadLoop(d *Downloader,results chan Piece) {
 				d.stats.unchokedPeers.Add(-1)
 			}
 			p.choked = true
+		// case REQUEST:
+		// 	if len(msg.Payload) < 12 {
+		// 	    continue
+		// 	}
+		// 	index := binary.BigEndian.Uint32(msg.Payload[0:4])
+		// 	begin := binary.BigEndian.Uint32(msg.Payload[4:8])
+		// 	length := binary.BigEndian.Uint32(msg.Payload[8:12])
+		// 	if d.field.HasPiece(int(index)) {
+		// 	    data, err := d.writer.Read(int(index), int(begin), int(length))
+		// 	    if err == nil {
+		// 	        p.SendPiece(index, begin, data)
+		// 	    }
+		// 	}
 		case HAVE:
 			index := binary.BigEndian.Uint32(msg.Payload)
 			if int(index) < len(p.peerBitfield)*8 {
