@@ -280,15 +280,20 @@ func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 	}
 }
 
-func (d *Downloader) processResults() {
+func (d *Downloader) PrintLogs() {
 	logTicker := time.NewTicker(1 * time.Second)
 	defer logTicker.Stop()
+	for {
+		<-logTicker.C
+		d.printStats()
+	}
+}
+
+func (d *Downloader) processResults() {
 	for {
 		select {
 		case <-d.downloadOver:
 			return
-		case <-logTicker.C:
-			d.printStats()
 		case piece := <-d.pieceQueue:
 			d.mu.Lock()
 			if d.field.HasPiece(int(piece.id)) {

@@ -20,7 +20,7 @@ func main() {
 		fmt.Println("couldnt start download:", err)
 		return
 	}
-
+	go dn.PrintLogs()
 	dn.Wait()
 	fmt.Println("Exiting...")
 	err = torrent.Verify(tf)
