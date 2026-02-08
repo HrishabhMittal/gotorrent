@@ -52,7 +52,7 @@ func (w *TorrentWriter) Write(index int, begin int, data []byte) error {
 			}
 			err := w.writeToFile(f.Path, data[:amount], relativeOffset)
 			if err != nil {
-				w.d.stats.totalWritten += 50
+				w.d.Stats.TotalWritten += 50
 				fmt.Printf("sad")
 				return err
 			}
@@ -61,7 +61,7 @@ func (w *TorrentWriter) Write(index int, begin int, data []byte) error {
 			data = data[amount:]
 			if bytesToWrite == 0 {
 				if w.d != nil {
-					w.d.stats.totalWritten += int64(total)
+					w.d.Stats.TotalWritten += int64(total)
 				}
 				return nil
 			}
@@ -72,7 +72,7 @@ func (w *TorrentWriter) Write(index int, begin int, data []byte) error {
 		return fmt.Errorf("wrote everything but still had %d bytes left (file size mismatch?)", bytesToWrite)
 	}
 	if w.d != nil {
-		w.d.stats.totalWritten += int64(total)
+		w.d.Stats.TotalWritten += int64(total)
 	}
 	return nil
 }

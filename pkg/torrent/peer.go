@@ -138,7 +138,7 @@ func (p *PeerCon) DownloadLoop(d *Downloader, results chan Piece) {
 	defer p.con.Close()
 	defer func() {
 		if !p.choked {
-			d.stats.unchokedPeers.Add(-1)
+			d.Stats.UnchokedPeers.Add(-1)
 		}
 	}()
 	p.SendExtendedHandshake()
@@ -162,12 +162,12 @@ func (p *PeerCon) DownloadLoop(d *Downloader, results chan Piece) {
 		switch msg.ID {
 		case UNCHOKE:
 			if p.choked {
-				d.stats.unchokedPeers.Add(1)
+				d.Stats.UnchokedPeers.Add(1)
 			}
 			p.choked = false
 		case CHOKE:
 			if !p.choked {
-				d.stats.unchokedPeers.Add(-1)
+				d.Stats.UnchokedPeers.Add(-1)
 			}
 			p.choked = true
 		// case REQUEST:
@@ -192,7 +192,7 @@ func (p *PeerCon) DownloadLoop(d *Downloader, results chan Piece) {
 			receivedBitfield = true
 			if len(msg.Payload) == len(p.peerBitfield) {
 				copy(p.peerBitfield, msg.Payload)
-				d.stats.BitfieldRecv.Add(1)
+				d.Stats.BitfieldRecv.Add(1)
 				seed := true
 				for _, v := range msg.Payload {
 					if v != 0xff {
@@ -201,10 +201,10 @@ func (p *PeerCon) DownloadLoop(d *Downloader, results chan Piece) {
 					}
 				}
 				if seed {
-					d.stats.seeders.Add(1)
+					d.Stats.Seeders.Add(1)
 				}
 			} else {
-				d.stats.BitfieldMiss.Add(1)
+				d.Stats.BitfieldMiss.Add(1)
 			}
 		case EXTENDED:
 			if len(msg.Payload) < 2 {

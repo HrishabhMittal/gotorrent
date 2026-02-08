@@ -28,7 +28,7 @@ type Downloader struct {
 	pexCh        chan string
 	seenPeers    map[string]bool
 	seenMu       sync.Mutex
-	stats        Stats
+	Stats        Stats
 }
 
 func NewDownloader(tf *TorrentFile) (*Downloader, error) {
@@ -49,8 +49,8 @@ func NewDownloader(tf *TorrentFile) (*Downloader, error) {
 	}
 	limit := make(chan struct{}, DISCOVERY_LIMIT)
 	writer.d = down
-	down.stats.startTime = time.Now()
-
+	down.Stats.StartTime = time.Now()
+	down.Stats.TotalSize = tf.DownloadLength()
 	go down.processResults()
 	confirm := make(chan *PeerCon, CONFIRMED_PEER_QUEUE)
 
@@ -64,13 +64,13 @@ func NewDownloader(tf *TorrentFile) (*Downloader, error) {
 func (d *Downloader) attemptConnection(p Peer, limit chan struct{}, confirm chan *PeerCon) {
 	limit <- struct{}{}
 	defer func() { <-limit }()
-	d.stats.peersProcessed.Add(1)
+	d.Stats.PeersProcessed.Add(1)
 	n := NewPeerCon(d.tf, &p, d.field, d.pexCh)
 	if err := n.ShakeHands(); err == nil {
-		d.stats.peersConfirmed.Add(1)
+		d.Stats.PeersConfirmed.Add(1)
 		confirm <- n
 	} else {
-		d.stats.peersDenied.Add(1)
+		d.Stats.PeersDenied.Add(1)
 	}
 }
 
@@ -82,7 +82,7 @@ func (d *Downloader) startDiscovery(confirm chan *PeerCon, limit chan struct{}) 
 		default:
 		}
 
-		d.stats.validTrackers.Store(0)
+		d.Stats.ValidTrackers.Store(0)
 		for _, tier := range d.tf.AnnounceList {
 			for _, announceURL := range tier {
 				go func(url string) {
@@ -103,7 +103,7 @@ func (d *Downloader) startDiscovery(confirm chan *PeerCon, limit chan struct{}) 
 						return
 					}
 
-					d.stats.validTrackers.Add(1)
+					d.Stats.ValidTrackers.Add(1)
 
 					for _, v := range peers {
 						addr := fmt.Sprintf("%s:%d", v.IP.String(), v.port)
@@ -114,7 +114,7 @@ func (d *Downloader) startDiscovery(confirm chan *PeerCon, limit chan struct{}) 
 							continue
 						}
 						d.seenPeers[addr] = true
-						d.stats.peersProvided.Add(1)
+						d.Stats.PeersProvided.Add(1)
 						d.seenMu.Unlock()
 
 						go d.attemptConnection(v, limit, confirm)
@@ -132,7 +132,7 @@ func (d *Downloader) processPEX(confirm chan *PeerCon, limit chan struct{}) {
 		case <-d.downloadOver:
 			return
 		case addr := <-d.pexCh:
-			d.stats.pexProcessed.Add(1)
+			d.Stats.PexProcessed.Add(1)
 			d.seenMu.Lock()
 			if d.seenPeers[addr] {
 				d.seenMu.Unlock()
@@ -150,7 +150,7 @@ func (d *Downloader) processPEX(confirm chan *PeerCon, limit chan struct{}) {
 					IP:   net.ParseIP(host),
 					port: uint16(port),
 				}
-				d.stats.pexAdded.Add(1)
+				d.Stats.PexAdded.Add(1)
 				d.attemptConnection(p, limit, confirm)
 			}(addr)
 		}
@@ -194,8 +194,8 @@ func (d *Downloader) PickPiece(peerBitfield Bitfield) (int, bool) {
 }
 
 func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
-	d.stats.numPeers.Add(1)
-	defer d.stats.numPeers.Add(-1)
+	d.Stats.NumPeers.Add(1)
+	defer d.Stats.NumPeers.Add(-1)
 
 	const BlockSize = REQUEST_BLOCK_SIZE
 
@@ -205,8 +205,8 @@ func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 		d.mu.Lock()
 		d.requested.ClearPiece(index)
 		d.mu.Unlock()
-		d.stats.currentlyDownloading.Add(-1)
-		d.stats.failed.Add(1)
+		d.Stats.CurrentlyDownloading.Add(-1)
+		d.Stats.Failed.Add(1)
 	}
 
 	for {
@@ -227,17 +227,17 @@ func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 		}
 		timeChoked = 0
 
-		d.stats.searching.Add(1)
+		d.Stats.Searching.Add(1)
 		index, found := d.PickPiece(p.peerBitfield)
-		d.stats.searching.Add(-1)
+		d.Stats.Searching.Add(-1)
 
 		if !found {
-			d.stats.notFound.Add(1)
+			d.Stats.NotFound.Add(1)
 			time.Sleep(1 * time.Second)
 			continue
 		}
 
-		d.stats.currentlyDownloading.Add(1)
+		d.Stats.CurrentlyDownloading.Add(1)
 		pieceSize := d.tf.PieceLength
 		if int64(index) == int64(len(d.tf.PieceHashes)-1) {
 			pieceSize = d.tf.Length - (int(index) * d.tf.PieceLength)
@@ -266,7 +266,7 @@ func (d *Downloader) startRequestWorker(p *PeerCon, peerPieces chan Piece) {
 
 		select {
 		case piece, ok := <-peerPieces:
-			d.stats.currentlyDownloading.Add(-1)
+			d.Stats.CurrentlyDownloading.Add(-1)
 			if !ok {
 				failPiece(index)
 				return
@@ -308,7 +308,7 @@ func (d *Downloader) processResults() {
 				d.mu.Lock()
 				d.requested.ClearPiece(int(piece.id))
 				d.mu.Unlock()
-				d.stats.failed.Add(1)
+				d.Stats.Failed.Add(1)
 				continue
 			}
 
@@ -316,7 +316,7 @@ func (d *Downloader) processResults() {
 				d.mu.Lock()
 				d.requested.ClearPiece(int(piece.id))
 				d.mu.Unlock()
-				d.stats.failed.Add(1)
+				d.Stats.Failed.Add(1)
 				continue
 			}
 

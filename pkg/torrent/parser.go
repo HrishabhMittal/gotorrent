@@ -31,6 +31,18 @@ type TorrentFile struct {
 	Files        []FileInfo
 	Name         string
 }
+func (bto *TorrentFile) DownloadLength() (int64) {
+	if (bto.Length!=0) {
+		return int64(bto.Length);
+	} else {
+		total := int64(0)
+		for _,v := range bto.Files {
+			total+=int64(v.Length)
+		}
+		return total
+	}
+}
+
 
 func (bto *bencodeObject) toTorrentFile() (TorrentFile, error) {
 	infoObj, err := bto.valAt("info")

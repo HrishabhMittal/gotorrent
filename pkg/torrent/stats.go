@@ -7,32 +7,33 @@ import (
 )
 
 type Stats struct {
-	pexProcessed         atomic.Int32
-	pexAdded             atomic.Int32
-	peersProcessed       atomic.Int32
-	peersConfirmed       atomic.Int32
-	peersDenied          atomic.Int32
-	startTime            time.Time
-	globalBitfield       Bitfield
-	totalWritten         int64
-	currentlyDownloading atomic.Int32
-	failed               atomic.Int32
-	numPeers             atomic.Int32
-	searching            atomic.Int32
-	notFound             atomic.Int32
-	unchokedPeers        atomic.Int32
-	seeders              atomic.Int32
+	TotalSize 			 int64
+	PexProcessed         atomic.Int32
+	PexAdded             atomic.Int32
+	PeersProcessed       atomic.Int32
+	PeersConfirmed       atomic.Int32
+	PeersDenied          atomic.Int32
+	StartTime            time.Time
+	GlobalBitfield       Bitfield
+	TotalWritten         int64
+	CurrentlyDownloading atomic.Int32
+	Failed               atomic.Int32
+	NumPeers             atomic.Int32
+	Searching            atomic.Int32
+	NotFound             atomic.Int32
+	UnchokedPeers        atomic.Int32
+	Seeders              atomic.Int32
 	BitfieldRecv         atomic.Int32
 	BitfieldMiss         atomic.Int32
-	validTrackers        atomic.Int32
-	peersProvided        atomic.Int32
+	ValidTrackers        atomic.Int32
+	PeersProvided        atomic.Int32
 }
 
 func (d *Downloader) printStats() {
-	elapsed := time.Since(d.stats.startTime).Seconds()
+	elapsed := time.Since(d.Stats.StartTime).Seconds()
 	var avgSpeed float64
 	if elapsed > 0 {
-		avgSpeed = float64(d.stats.totalWritten) / elapsed
+		avgSpeed = float64(d.Stats.TotalWritten) / elapsed
 	}
 
 	fmt.Print("\033[H\033[2J")
@@ -66,20 +67,20 @@ Failed:        %-8d | Not Found:     %-8d
 =========================================================
 `,
 		d.piecesDone, len(d.tf.PieceHashes),
-		formatBytes(float64(d.stats.totalWritten)),
+		formatBytes(float64(d.Stats.TotalWritten)),
 		formatBytes(avgSpeed),
-		time.Since(d.stats.startTime).Round(time.Second),
+		time.Since(d.Stats.StartTime).Round(time.Second),
 
-		d.stats.validTrackers.Load(), d.stats.numPeers.Load(),
-		d.stats.unchokedPeers.Load(), d.stats.seeders.Load(),
-		d.stats.currentlyDownloading.Load(), d.stats.searching.Load(),
+		d.Stats.ValidTrackers.Load(), d.Stats.NumPeers.Load(),
+		d.Stats.UnchokedPeers.Load(), d.Stats.Seeders.Load(),
+		d.Stats.CurrentlyDownloading.Load(), d.Stats.Searching.Load(),
 
-		d.stats.pexProcessed.Load(), d.stats.pexAdded.Load(),
-		d.stats.peersProvided.Load(), d.stats.peersProcessed.Load(),
-		d.stats.peersConfirmed.Load(), d.stats.peersDenied.Load(),
+		d.Stats.PexProcessed.Load(), d.Stats.PexAdded.Load(),
+		d.Stats.PeersProvided.Load(), d.Stats.PeersProcessed.Load(),
+		d.Stats.PeersConfirmed.Load(), d.Stats.PeersDenied.Load(),
 
-		d.stats.BitfieldRecv.Load(), d.stats.BitfieldMiss.Load(),
-		d.stats.failed.Load(), d.stats.notFound.Load(),
+		d.Stats.BitfieldRecv.Load(), d.Stats.BitfieldMiss.Load(),
+		d.Stats.Failed.Load(), d.Stats.NotFound.Load(),
 	)
 }
 func formatBytes(b float64) string {
