@@ -7,9 +7,10 @@ import (
 )
 
 type Stats struct {
-	TotalSize 			 int64
+	TotalSize            int64
 	PexProcessed         atomic.Int32
 	PexAdded             atomic.Int32
+	PexSent              atomic.Int32
 	PeersProcessed       atomic.Int32
 	PeersConfirmed       atomic.Int32
 	PeersDenied          atomic.Int32
@@ -57,8 +58,9 @@ Active DL:   %-10d | Searching:     %-10d
 PEX & DISCOVERY
 ---------------------------------------------------------
 PEX Processed:  %-8d | PEX Added:     %-8d
-Peers Provided: %-8d | Peers Proc:    %-8d
-Peers Confirm:  %-8d | Peers Denied:  %-8d
+PEX Sent:       %-8d | Peers Provided: %-8d
+Peers Proc:     %-8d | Peers Confirm:  %-8d 
+Peers Denied:   %-8d
 
 BITFIELD & ERRORS
 ---------------------------------------------------------
@@ -76,8 +78,9 @@ Failed:        %-8d | Not Found:     %-8d
 		d.Stats.CurrentlyDownloading.Load(), d.Stats.Searching.Load(),
 
 		d.Stats.PexProcessed.Load(), d.Stats.PexAdded.Load(),
-		d.Stats.PeersProvided.Load(), d.Stats.PeersProcessed.Load(),
-		d.Stats.PeersConfirmed.Load(), d.Stats.PeersDenied.Load(),
+		d.Stats.PexSent.Load(), d.Stats.PeersProvided.Load(),
+		d.Stats.PeersProcessed.Load(), d.Stats.PeersConfirmed.Load(),
+		d.Stats.PeersDenied.Load(),
 
 		d.Stats.BitfieldRecv.Load(), d.Stats.BitfieldMiss.Load(),
 		d.Stats.Failed.Load(), d.Stats.NotFound.Load(),

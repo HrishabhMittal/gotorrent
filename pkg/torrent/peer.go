@@ -36,6 +36,7 @@ type PeerCon struct {
 	choked       bool
 	pexCh        chan string
 	remotePexID  int
+	RemotePeerID string
 }
 
 func NewPeerCon(tf *TorrentFile, p *Peer, bits Bitfield, pexCh chan string) *PeerCon {
@@ -78,6 +79,7 @@ func (p *PeerCon) ShakeHands() error {
 	if !bytes.Equal(p.tf.InfoHash[:], resp[28:48]) {
 		return fmt.Errorf("info hash mismatch")
 	}
+	p.RemotePeerID = string(resp[48:68])
 	return nil
 }
 func (p *PeerCon) SendExtendedHandshake() error {

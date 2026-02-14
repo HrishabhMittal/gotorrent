@@ -15,6 +15,12 @@ type Piece struct {
 	data []byte
 }
 
+type PeerInfo struct {
+	Addr   string
+	ID     string
+	Choked bool
+}
+
 type Downloader struct {
 	peerMu       sync.Mutex
 	pieceQueue   chan Piece
@@ -29,6 +35,7 @@ type Downloader struct {
 	seenPeers    map[string]bool
 	seenMu       sync.Mutex
 	Stats        Stats
+	activePeers  map[string]*PeerCon
 }
 
 func NewDownloader(tf *TorrentFile) (*Downloader, error) {
@@ -46,6 +53,7 @@ func NewDownloader(tf *TorrentFile) (*Downloader, error) {
 		writer:       writer,
 		pexCh:        make(chan string, PEX_CHANNEL),
 		seenPeers:    make(map[string]bool),
+		activePeers:  make(map[string]*PeerCon),
 	}
 	limit := make(chan struct{}, DISCOVERY_LIMIT)
 	writer.d = down
@@ -172,10 +180,16 @@ func (d *Downloader) manageNewPeers(confirm chan *PeerCon) {
 
 func (d *Downloader) AddPeer(p *PeerCon) {
 	d.peerMu.Lock()
-	defer d.peerMu.Unlock()
+	addr := fmt.Sprintf("%s:%d", p.p.IP.String(), p.p.port)
+	d.activePeers[addr] = p
+	d.peerMu.Unlock()
+
 	peerPieces := make(chan Piece)
 	go func() {
 		p.DownloadLoop(d, peerPieces)
+		d.peerMu.Lock()
+		delete(d.activePeers, addr)
+		d.peerMu.Unlock()
 		close(peerPieces)
 	}()
 	go d.startRequestWorker(p, peerPieces)
@@ -336,4 +350,30 @@ func (d *Downloader) processResults() {
 
 func (d *Downloader) Wait() {
 	<-d.downloadOver
+}
+
+func (d *Downloader) GetActivePeers() []PeerInfo {
+	d.peerMu.Lock()
+	defer d.peerMu.Unlock()
+	var infos []PeerInfo
+	for addr, p := range d.activePeers {
+		infos = append(infos, PeerInfo{
+			Addr:   addr,
+			ID:     p.RemotePeerID,
+			Choked: p.choked,
+		})
+	}
+	return infos
+}
+
+func (d *Downloader) GetBitfield() Bitfield {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	dst := make(Bitfield, len(d.field))
+	copy(dst, d.field)
+	return dst
+}
+
+func (d *Downloader) Done() <-chan struct{} {
+	return d.downloadOver
 }
